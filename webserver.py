@@ -18,6 +18,7 @@ import os
 from lamden.crypto import transaction
 import decimal
 from pathlib import Path
+import shutil
 
 log = get_logger("MN-WebServer")
 
@@ -47,17 +48,28 @@ class ByteEncoder(_json.JSONEncoder):
 class FileQueue:
     EXTENSION = '.tx'
 
-    def __init__(self, root='./something'):
+    def __init__(self, root='./txs'):
         self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
 
     def append(self, tx):
         name = str(uuid.uuid4()) + self.EXTENSION
-        with open(self.root.joinpath(name)) as f:
+        with open(self.root.joinpath(name), 'w') as f:
             f.write(tx)
 
     def pop(self, idx):
         items = sorted(self.root.iterdir(), key=os.path.getmtime)
-        return items.pop(idx)
+        item = items.pop(idx)
+
+        with open(item) as f:
+            i = decode(f.read())
+
+        os.remove(item)
+
+        return i
+
+    def flush(self):
+        shutil.rmtree(self.root)
 
     def __len__(self):
         try:
