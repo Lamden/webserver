@@ -9,16 +9,19 @@ from contracting.compilation import parser
 from lamden import storage
 from lamden.crypto.canonical import tx_hash_from_tx
 from lamden.crypto.transaction import TransactionException
+from lamden.crypto.wallet import Wallet
 import decimal
 from contracting.stdlib.bridge.decimal import ContractingDecimal
-import uuid
+from lamden.nodes.base import FileQueue
+
 import ssl
 import asyncio
-import os
+
 from lamden.crypto import transaction
 import decimal
-from pathlib import Path
-import shutil
+
+# Instantiate the parser
+import argparse
 
 log = get_logger("MN-WebServer")
 
@@ -45,42 +48,9 @@ class ByteEncoder(_json.JSONEncoder):
         return super().default(o, *args, **kwargs)
 
 
-class FileQueue:
-    EXTENSION = '.tx'
-
-    def __init__(self, root='./txs'):
-        self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
-
-    def append(self, tx):
-        name = str(uuid.uuid4()) + self.EXTENSION
-        with open(self.root.joinpath(name), 'w') as f:
-            f.write(tx)
-
-    def pop(self, idx):
-        items = sorted(self.root.iterdir(), key=os.path.getmtime)
-        item = items.pop(idx)
-
-        with open(item) as f:
-            i = decode(f.read())
-
-        os.remove(item)
-
-        return i
-
-    def flush(self):
-        shutil.rmtree(self.root)
-
-    def __len__(self):
-        try:
-            length = len(list(self.root.iterdir()))
-            return length
-        except FileNotFoundError:
-            return 0
-
-
 class WebServer:
-    def __init__(self, contracting_client: ContractingClient, driver: ContractDriver, wallet, blocks, queue=[],
+    def __init__(self, contracting_client: ContractingClient, driver: ContractDriver, wallet, blocks,
+                 queue=FileQueue('~/txs'),
                  port=8080, ssl_port=443, ssl_enabled=False,
                  ssl_cert_file='~/.ssh/server.csr',
                  ssl_key_file='~/.ssh/server.key',
@@ -310,6 +280,24 @@ class WebServer:
             return response.json({'value': value}, status=200, dumps=encode,
                                  headers={'Access-Control-Allow-Origin': '*'})
 
+    # async def iterate_variable(self, request, contract, variable):
+    #     contract_code = self.client.raw_driver.get_contract(contract)
+    #
+    #     if contract_code is None:
+    #         return response.json({'error': '{} does not exist'.format(contract)}, status=404)
+    #
+    #     key = request.args.get('key')
+    #     # if key is not None:
+    #     #     key = key.split(',')
+    #
+    #     k = self.client.raw_driver.make_key(contract=contract, variable=variable, args=key)
+    #
+    #     values = self.client.raw_driver.driver.iter(k, length=500)
+    #
+    #     if len(values) == 0:
+    #         return response.json({'values': None}, status=404)
+    #     return response.json({'values': values, 'next': values[-1]}, status=200)
+
     async def get_latest_block(self, request):
         num = storage.get_latest_block_height(self.driver)
         block = self.blocks.get_block(int(num))
@@ -379,3 +367,24 @@ class WebServer:
             'masternodes': masternodes,
             'delegates': delegates
         }, headers={'Access-Control-Allow-Origin': '*'})
+
+
+if __name__ == '__main__':
+    arg_parser = argparse.ArgumentParser(description='Standard Lamden HTTP Webserver')
+
+    arg_parser.add_argument('-k', '--key', type=str, required=True)
+
+    args = arg_parser.parse_args()
+
+    sk = bytes.fromhex(args.key)
+    wallet = Wallet(seed=sk)
+
+    webserver = WebServer(
+        contracting_client=ContractingClient(),
+        driver=storage.ContractDriver(),
+        blocks=storage.BlockStorage(),
+        wallet=wallet,
+        port=18080
+    )
+
+    webserver.app.run(host='0.0.0.0', port=webserver.port, debug=webserver.debug, access_log=webserver.access_log)
